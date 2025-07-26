@@ -1,0 +1,248 @@
+import google.generativeai as genai
+import os
+import json
+from typing import List, Dict, Any
+
+# Add dotenv import and call
+from dotenv import load_dotenv
+load_dotenv()
+
+# Correct imports for openai.agents SDK
+# Assuming openai-agents is installed correctly, these should be the standard imports.
+# The try-except block for 'tool' is removed, assuming a proper installation.
+from agents import Agent, Runner ,function_tool
+from agents.run import RunConfig, AgentRunner
+
+# --- Configuration ---
+API_KEY = os.getenv("GEMINI_API_KEY")
+genai.configure(api_key=API_KEY)
+MODEL_NAME = "gemini-2.0-flash"
+
+# --- OpenAI-style message/response types ---
+# Using the custom classes provided by the user.
+class ChatCompletionMessage:
+    def __init__(self, role: str, content: str):
+        self.role = role
+        self.content = content
+
+class ChatCompletion:
+    def __init__(self, id: str, choices: list, created: int, model: str, object: str, usage: dict):
+        self.id = id
+        self.choices = choices
+        self.created = created
+        self.model = model
+        self.object = object
+        self.usage = usage
+
+# --- Custom Gemini Client for OpenAI Agent SDK ---
+class GeminiOpenAIClient:
+    """
+    A custom client that mimics the OpenAI API's chat.completions.create method
+    but uses Google's Gemini API internally. This allows the OpenAI Agent SDK
+    to use Gemini as its underlying large language model.
+    """
+    def __init__(self, model_name: str):
+        self._model = genai.GenerativeModel(model_name)
+        self.model_name = model_name
+
+    def chat(self):
+        return self
+
+    def completions(self):
+        return self
+
+    def create(self, messages: List[Dict[str, Any]], **kwargs) -> ChatCompletion:
+        """
+        Translates OpenAI chat completion request to Gemini's format and calls Gemini API.
+        Then, translates Gemini's response back to OpenAI's ChatCompletion format.
+        """
+        gemini_messages = []
+        for msg in messages:
+            # Gemini uses 'model' for assistant responses in chat history
+            role = "user" if msg["role"] == "user" else "model"
+            gemini_messages.append({"role": role, "parts": [{"text": msg["content"]}]})
+
+        try:
+            response = self._model.generate_content(gemini_messages)
+            if response.candidates and response.candidates[0].content and response.candidates[0].content.parts:
+                text_content = response.candidates[0].content.parts[0].text
+                
+                # Use the custom ChatCompletionMessage class
+                message = ChatCompletionMessage(role="assistant", content=text_content)
+                return ChatCompletion(
+                    id=f"gemini-completion-{os.urandom(4).hex()}",
+                    choices=[{"index": 0, "message": message, "finish_reason": "stop", "logprobs": None}],
+                    created=0,
+                    model=self.model_name,
+                    object="chat.completion",
+                    usage={"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+                )
+            else:
+                raise Exception("Gemini API did not return valid content.")
+        except Exception as e:
+            print(f"Error calling Gemini API: {e}")
+            # Use the custom ChatCompletionMessage class for error response
+            message = ChatCompletionMessage(role="assistant", content=f"An error occurred: {e}")
+            return ChatCompletion(
+                id=f"gemini-error-{os.urandom(4).hex()}",
+                choices=[{"index": 0, "message": message, "finish_reason": "error", "logprobs": None}],
+                created=0,
+                model=self.model_name,
+                object="chat.completion",
+                usage={"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+            )
+
+gemini_client = GeminiOpenAIClient(MODEL_NAME)
+
+# --- Mock Tools (decorated for OpenAI Agent SDK) ---
+@function_tool
+def get_career_roadmap(career_field: str) -> str:
+    """
+    Mocks a tool call to get a career roadmap for a given field.
+    In a real scenario, this would fetch data from a database or external API.
+    """
+    roadmaps = {
+        "Software Engineer": {
+            "Junior": ["Learn Python/Java", "Data Structures & Algorithms", "Web Development Basics (HTML, CSS, JS)"],
+            "Mid-Level": ["Advanced Algorithms", "System Design", "Cloud Platforms (AWS/Azure/GCP)", "Frameworks (React/Angular/Spring)"],
+            "Senior": ["Distributed Systems", "Microservices Architecture", "Leadership & Mentorship", "DevOps Practices"]
+        },
+        "Data Scientist": {
+            "Junior": ["Statistics & Probability", "Python (Pandas, NumPy)", "Machine Learning Basics", "SQL"],
+            "Mid-Level": ["Deep Learning", "Big Data Technologies (Spark)", "Experiment Design", "Data Visualization"],
+            "Senior": ["MLOps", "Model Deployment", "Strategic Data Analysis", "Team Leadership"]
+        },
+        "Product Manager": {
+            "Junior": ["Market Research", "Product Lifecycle", "User Stories", "Agile Methodologies"],
+            "Mid-Level": ["Product Strategy", "Roadmapping", "Stakeholder Management", "UX/UI Principles"],
+            "Senior": ["Portfolio Management", "Business Acumen", "Cross-functional Leadership", "Innovation Driving"]
+        }
+    }
+    roadmap = roadmaps.get(career_field, {"Error": f"Roadmap not found for {career_field}. Please try another field."})
+    return json.dumps(roadmap, indent=2) # Return as JSON string
+
+# --- Agent Definitions using OpenAI Agent SDK ---
+
+# Career Agent: Suggests career paths
+career_agent = Agent(
+    name="CareerAgent",
+    model=gemini_client,
+    instructions=(
+        "You are a Career Agent. Your primary role is to suggest potential career paths "
+        "based on a user's interests. Be encouraging and provide a brief reason for each suggestion. "
+        "When the user asks about skills or job roles for a specific field, you should indicate "
+        "that another agent can help and suggest a handoff."
+    )
+)
+
+# Skill Agent: Shows skill-building plans using the get_career_roadmap tool
+skill_agent = Agent(
+    name="SkillAgent",
+    model=gemini_client,
+    tools=[get_career_roadmap], # Register the tool with this agent
+    instructions=(
+        "You are a Skill Agent. Your role is to provide detailed skill roadmaps for a given career field. "
+        "You must use the `get_career_roadmap` tool to fetch the information. "
+        "Once you have the roadmap, summarize it concisely and suggest actionable steps for learning. "
+        "If the user asks about general career suggestions or job roles, suggest a handoff to the relevant agent."
+    )
+)
+
+# Job Agent: Shares real-world job roles
+job_agent = Agent(
+    name="JobAgent",
+    model=gemini_client,
+    instructions=(
+        "You are a Job Agent. Your role is to describe typical real-world job roles "
+        "and their main responsibilities for a specified career field. "
+        "If the user asks about career suggestions or skill roadmaps, suggest a handoff."
+    )
+)
+
+# --- Handoff Logic and Main Application Flow using AgentRunner ---
+
+class CareerMentorSystem:
+    def __init__(self):
+        # Define the agents and their handoff rules
+        self.runner = AgentRunner(
+            agents=[career_agent, skill_agent, job_agent],
+            # Define handoff rules. These are simplified for demonstration.
+            # In a real application, you might use more sophisticated intent recognition.
+            handoff_rules=[
+                {
+                    "from": career_agent,
+                    "to": skill_agent,
+                    "on": lambda message: "skill" in message.lower() or "roadmap" in message.lower() or "learn" in message.lower()
+                },
+                {
+                    "from": career_agent,
+                    "to": job_agent,
+                    "on": lambda message: "job" in message.lower() or "roles" in message.lower() or "responsibilities" in message.lower()
+                },
+                {
+                    "from": skill_agent,
+                    "to": career_agent,
+                    "on": lambda message: "career" in message.lower() or "suggest" in message.lower() or "paths" in message.lower()
+                },
+                {
+                    "from": job_agent,
+                    "to": career_agent,
+                    "on": lambda message: "career" in message.lower() or "suggest" in message.lower() or "paths" in message.lower()
+                },
+                {
+                    "from": skill_agent,
+                    "to": job_agent,
+                    "on": lambda message: "job" in message.lower() or "roles" in message.lower() or "responsibilities" in message.lower()
+                },
+                {
+                    "from": job_agent,
+                    "to": skill_agent,
+                    "on": lambda message: "skill" in message.lower() or "roadmap" in message.lower() or "learn" in message.lower()
+                }
+            ]
+        )
+        self.current_agent = None # To track which agent is active (for initial prompt)
+
+    def run(self):
+        print("Welcome to the Career Mentor Agent!")
+        print("I can help you explore career paths, understand required skills, and learn about job roles.")
+        print("Type 'exit' to quit at any time.")
+
+        # Start with the CareerAgent
+        self.current_agent = career_agent
+        print(f"[{self.current_agent.name}]: Please tell me about your interests (e.g., 'coding and problem-solving', 'creativity and design').")
+
+        while True:
+            user_input = input("\n[You]: ").strip()
+            if user_input.lower() == 'exit':
+                print("Thank you for using the Career Mentor Agent. Goodbye!")
+                break
+
+            # The AgentRunner handles the routing and execution
+            # We explicitly set the initial agent for the first turn, then let runner manage.
+            if self.current_agent is None: # Should only happen on first turn
+                self.current_agent = career_agent
+
+            try:
+                # The runner will decide which agent to use and execute it
+                # The runner's `chat` method will handle the entire conversation flow
+                # including tool calls and handoffs based on agent instructions.
+                # For simplicity, we'll run a single step of the runner for each user input.
+                # In a more complex setup, you might loop the runner until a final answer is given.
+                response = self.runner.chat(user_input, agent=self.current_agent)
+                print(f"[{response.agent_name}]: {response.message}")
+                self.current_agent = self.runner.current_agent # Update current agent after run
+            except Exception as e:
+                print(f"[System Error]: An error occurred during agent execution: {e}")
+                print("[System]: Please try again or type 'exit' to quit.")
+
+
+if __name__ == "__main__":
+    # Check if API key is set for local testing
+    if not API_KEY: # Changed condition to check if API_KEY is None or empty
+        print("WARNING: GEMINI_API_KEY environment variable is not set. Please set it before running the script.")
+        print("You might encounter authentication errors if running locally without a key.")
+        print("If running in a Canvas environment, the key will be provided automatically.")
+
+    system = CareerMentorSystem()
+    system.run()
