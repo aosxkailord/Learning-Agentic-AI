@@ -1,71 +1,59 @@
+"""
+🌟 Career Mentor Agent System
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Created by: Kashan Malik
+Version: 1.0.0
+
+An AI-powered career guidance system that helps users:
+┌─────────────────────────────┐
+│ 🎯 Discover career paths    │
+│ 📚 Learn required skills    │
+│ 💼 Find job opportunities   │
+└─────────────────────────────┘
+"""
+
 import os
 from dotenv import load_dotenv
-from agents import Agent, Runner, AsyncOpenAI, OpenAIChatCompletionsModel, function_tool
+from agents import Runner, OpenAIChatCompletionsModel, AsyncOpenAI
 from agents.run import RunConfig
-from roadmap_tool import create_roadmap
-import asyncio
+from career_agents import create_agents
 
-# 🌱 Load environment variables for secure API access
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 🔧 Configuration
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━
 load_dotenv()
 
-# 🤖 Initialize the OpenAI-compatible Gemini model client
 external_client = AsyncOpenAI(
     api_key=os.getenv("GEMINI_API_KEY"),
     base_url=os.getenv("Gemini_API_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai/")
 )
 
-# 🧠 Set up the chat model for our agents
 model = OpenAIChatCompletionsModel(
     model="gemini-2.0-flash",
     openai_client=external_client
 )
 
-# ⚙️ Configure how the agents will run (tracing is off for privacy)
 config = RunConfig(
     model=model,
     tracing_disabled=True,
 )
 
-# 👨‍🏫 Career Agent: Your friendly mentor for career exploration!
-career_agent = Agent(
-    name="Career Agent",
-    instructions=(
-        "You are Career Agent, an expert career mentor. "
-        "Guide users as they explore career paths, discover skill gaps, and build actionable roadmaps. "
-        "Offer personalized, practical, and encouraging advice. "
-        "Stay up-to-date with industry trends and best practices. "
-        "When needed, use the 'create_roadmap' tool to craft step-by-step plans for users' career goals."
-    ),
-    model=model,
-)
-
-# 🛠️ Skill Agent: Specialist in crafting and explaining career roadmaps!
-skill_agent = Agent(
-    name="Skill Agent",
-    instructions=(
-        "You are Skill Agent, a specialist in sharing and explaining career roadmaps. "
-        "When a user requests a career roadmap, use the 'create_roadmap' tool to generate and present a clear, actionable plan. "
-        "Make sure the roadmap fits the user's goals and skill level, and provide concise explanations for each step."
-    ),
-    tools=[create_roadmap],
-    model=model,
-)
-
-# 💼 Job Agent: Your expert for job suggestions and opportunities!
-job_agent = Agent(
-    name="Job Agent",
-    instructions=(
-        "You are Job Agent, an expert in suggesting job opportunities. "
-        "Help users by recommending relevant jobs based on their skills, interests, and career goals. "
-        "Share practical advice on job searching, application strategies, and industry trends. "
-        "Make your suggestions personalized and actionable."
-    ),
-    model=model,
-)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 🤖 Initialize Agents
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+career_agent, skill_agent, job_agent = create_agents(model)
 
 def main():
-    print("🌟 Welcome to the Career Mentor Agent! 🌟")
-    print("👋 Hi there! I'm your AI-powered career companion, coded with care by Kashan Malik.")
+    """
+    🚀 Career Mentor Interactive Session
+    Run the main career guidance workflow
+    """
+    print("┌────────────────────────────────┐")
+    print("│    Career Mentor Agent v1.0    │")
+    print("└────────────────────────────────┘")
+    print("👋 Welcome! I'm your AI career companion")
+    print("💫 Crafted with ❤️  by Kashan Malik\n")
+
     interest = input("🔎 What is your career interest? ")
 
     print("\n🤔 Thinking about the best career field for you...")
